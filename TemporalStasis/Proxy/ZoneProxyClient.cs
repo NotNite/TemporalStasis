@@ -18,13 +18,15 @@ public class ZoneProxyClient {
     public int Id;
     
     private IOodleFactory oodleFactory;
-    private IOodle? compressor;
     private NetworkStream stream;
     private NetworkStream proxyStream;
     private RawPacketClientInterceptor raw;
     private IpcPacketClientInterceptor ipc;
     private SemaphoreSlim semaphore = new(1);
     private ConnectionType type = ConnectionType.None;
+    
+    private IOodle? clientboundCompressor;
+    private IOodle? serverboundCompressor;
     
     public ZoneProxyClient(
         IOodleFactory oodleFactory,
@@ -61,7 +63,8 @@ public class ZoneProxyClient {
             data = ms.ToArray();
         }
         
-        var oodled = this.compressor!.Encode(data);
+        var compressor = serverbound ? this.serverboundCompressor : this.clientboundCompressor;
+        var oodled = compressor!.Encode(data);
         await this.semaphore.WaitAsync();
         try {
             var header = new PacketHeader {
@@ -84,7 +87,11 @@ public class ZoneProxyClient {
     private async Task Proxy(NetworkStream src, NetworkStream dest, bool serverbound) {
         using var oodle = this.oodleFactory.Create();
         using var otherOodle = this.oodleFactory.Create();
-        if (serverbound) this.compressor = oodle;
+        if (serverbound) {
+            this.serverboundCompressor = oodle;
+        } else {
+            this.clientboundCompressor = oodle;
+        }
         
         while (src.CanRead && dest.CanWrite) {
             var header = await src.ReadStructAsync<PacketHeader>();

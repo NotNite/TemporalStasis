@@ -21,3 +21,4 @@ FFXIV network proxy library.
 
 - [ ] Make it performant jfc
 - [ ] Test packet sending
+- [ ] Support Zlib
