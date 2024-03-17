@@ -62,17 +62,25 @@ public class ZoneProxy(
         var proxyClient = new ZoneProxyClient(
             oodleFactory, id, stream, proxyStream,
             (ref RawInterceptedPacket packet, ref bool dropped, bool serverbound, ConnectionType type) => {
-                if (serverbound) {
-                    this.OnRawServerboundPacket?.Invoke(id, ref packet, ref dropped, type);
-                } else {
-                    this.OnRawClientboundPacket?.Invoke(id, ref packet, ref dropped, type);
+                try {
+                    if (serverbound) {
+                        this.OnRawServerboundPacket?.Invoke(id, ref packet, ref dropped, type);
+                    } else {
+                        this.OnRawClientboundPacket?.Invoke(id, ref packet, ref dropped, type);
+                    }
+                } catch (Exception e) {
+                    Console.WriteLine(e);
                 }
             },
             (ref IpcInterceptedPacket packet, ref bool dropped, bool serverbound, ConnectionType type) => {
-                if (serverbound) {
-                    this.OnIpcServerboundPacket?.Invoke(id, ref packet, ref dropped, type);
-                } else {
-                    this.OnIpcClientboundPacket?.Invoke(id, ref packet, ref dropped, type);
+                try {
+                    if (serverbound) {
+                        this.OnIpcServerboundPacket?.Invoke(id, ref packet, ref dropped, type);
+                    } else {
+                        this.OnIpcClientboundPacket?.Invoke(id, ref packet, ref dropped, type);
+                    }
+                } catch (Exception e) {
+                    Console.WriteLine(e);
                 }
             }
         );

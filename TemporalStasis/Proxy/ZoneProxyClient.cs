@@ -105,41 +105,41 @@ public class ZoneProxyClient {
                 data = oodle.Decode(data, (int) header.UncompressedSize);
             }
             
-                using (var ms = new MemoryStream(data)) {
-                    var survivedPackets = new List<RawInterceptedPacket>();
-                    for (var i = 0; i < header.Count; i++) {
-                        var packet = new RawInterceptedPacket(ms);
-                        
-                        var dropped = false;
-                        this.raw.Invoke(ref packet, ref dropped, serverbound, this.type);
-                        
-                        if (packet.SegmentHeader.SegmentType == SegmentType.Ipc) {
-                            var ipcPacket = new IpcInterceptedPacket(packet);
-                            this.ipc.Invoke(ref ipcPacket, ref dropped, serverbound, this.type);
-                            ipcPacket.Revalidate();
-                            packet = ipcPacket.ToRawPacket();
-                        }
-                        
-                        if (!dropped) survivedPackets.Add(packet);
+            using (var ms = new MemoryStream(data)) {
+                var survivedPackets = new List<RawInterceptedPacket>();
+                for (var i = 0; i < header.Count; i++) {
+                    var packet = new RawInterceptedPacket(ms);
+                    
+                    var dropped = false;
+                    this.raw.Invoke(ref packet, ref dropped, serverbound, this.type);
+                    
+                    if (packet.SegmentHeader.SegmentType == SegmentType.Ipc) {
+                        var ipcPacket = new IpcInterceptedPacket(packet);
+                        this.ipc.Invoke(ref ipcPacket, ref dropped, serverbound, this.type);
+                        ipcPacket.Revalidate();
+                        packet = ipcPacket.ToRawPacket();
                     }
                     
-                    var headerSize = (uint) Marshal.SizeOf<PacketHeader>();
-                    foreach (var packet in survivedPackets) {
-                        packet.Revalidate();
-                        headerSize += packet.SegmentHeader.Size;
-                    }
-                    
-                    header.Size = headerSize;
-                    header.Count = (ushort) survivedPackets.Count;
-                    
-                    using var newData = new MemoryStream();
-                    foreach (var packet in survivedPackets) {
-                        await newData.WriteStructAsync(packet.SegmentHeader);
-                        await newData.WriteBytesAsync(packet.Data);
-                    }
-                    
-                    data = newData.ToArray();
+                    if (!dropped) survivedPackets.Add(packet);
                 }
+                
+                var headerSize = (uint) Marshal.SizeOf<PacketHeader>();
+                foreach (var packet in survivedPackets) {
+                    packet.Revalidate();
+                    headerSize += packet.SegmentHeader.Size;
+                }
+                
+                header.Size = headerSize;
+                header.Count = (ushort) survivedPackets.Count;
+                
+                using var newData = new MemoryStream();
+                foreach (var packet in survivedPackets) {
+                    await newData.WriteStructAsync(packet.SegmentHeader);
+                    await newData.WriteBytesAsync(packet.Data);
+                }
+                
+                data = newData.ToArray();
+            }
             
             if (header.CompressionType == CompressionType.Oodle) {
                 header.UncompressedSize = (uint) data.Length;

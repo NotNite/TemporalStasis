@@ -58,18 +58,23 @@ public class LobbyProxy(
         var proxyClient = new LobbyProxyClient(
             id, stream, proxyStream,
             (ref RawInterceptedPacket packet, ref bool dropped, bool serverbound) => {
-                if (serverbound) {
-                    this.OnRawServerboundPacket?.Invoke(id, ref packet, ref dropped, ConnectionType.Lobby);
-                } else {
-                    this.OnRawClientboundPacket?.Invoke(id, ref packet, ref dropped, ConnectionType.Lobby);
+                try {
+                    if (serverbound) {
+                        this.OnRawServerboundPacket?.Invoke(id, ref packet, ref dropped, ConnectionType.Lobby);
+                    } else {
+                        this.OnRawClientboundPacket?.Invoke(id, ref packet, ref dropped, ConnectionType.Lobby);
+                    }
+                } catch (Exception e) {
+                    Console.WriteLine(e);
                 }
             },
             (ref IpcInterceptedPacket packet, ref bool dropped, bool serverbound) => {
-                if (serverbound) {
-                    this.OnIpcServerboundPacket?.Invoke(id, ref packet, ref dropped, ConnectionType.Lobby);
-                } else {
-                    this.OnIpcClientboundPacket?.Invoke(id, ref packet, ref dropped, ConnectionType.Lobby);
-                    
+                try {
+                    if (serverbound) {
+                        this.OnIpcServerboundPacket?.Invoke(id, ref packet, ref dropped, ConnectionType.Lobby);
+                    } else {
+                        this.OnIpcClientboundPacket?.Invoke(id, ref packet, ref dropped, ConnectionType.Lobby);
+                        
                         if (this.ZoneProxy is not null && packet.IpcHeader.Opcode == EnterWorldOpcode) {
                             var packetPort = BitConverter.ToUInt16(packet.Data[EnterWorldPortOffset..]);
                             var packetHost = Encoding.UTF8.GetString(
@@ -90,6 +95,9 @@ public class LobbyProxy(
                             
                             //Console.WriteLine($"EnterWorld packet received, forwarding to {packetHost}:{packetPort}");
                         }
+                    }
+                } catch (Exception e) {
+                    Console.WriteLine(e);
                 }
             }
         );
