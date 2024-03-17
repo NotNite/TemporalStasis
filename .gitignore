@@ -1,0 +1,13 @@
+# IDEs
+.vs/
+.idea/
+.vscode/
+.fleet/
+
+# Build files
+bin/
+obj/
+
+# Misc
+local/
+*.user

@@ -1,0 +1,22 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TemporalStasis", "TemporalStasis\TemporalStasis.csproj", "{1ABCC4F9-0FAB-4CF0-B557-3BC5245933A8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TemporalStasis.Example", "TemporalStasis.Example\TemporalStasis.Example.csproj", "{D6AD8D26-70EE-4440-8255-0452E4DA2C4E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{1ABCC4F9-0FAB-4CF0-B557-3BC5245933A8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1ABCC4F9-0FAB-4CF0-B557-3BC5245933A8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1ABCC4F9-0FAB-4CF0-B557-3BC5245933A8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1ABCC4F9-0FAB-4CF0-B557-3BC5245933A8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D6AD8D26-70EE-4440-8255-0452E4DA2C4E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D6AD8D26-70EE-4440-8255-0452E4DA2C4E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D6AD8D26-70EE-4440-8255-0452E4DA2C4E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D6AD8D26-70EE-4440-8255-0452E4DA2C4E}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
