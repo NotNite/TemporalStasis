@@ -28,6 +28,9 @@ void ZoneIpcClientboundPacket(int id, ref IpcInterceptedPacket packet, ref bool 
     Console.WriteLine("Received zone IPC packet with opcode " + packet.IpcHeader.Opcode);
 }
 
+lobbyProxy.OnRawClientboundFrame += (frame, type) => {
+    //Console.WriteLine("Lobby frame received: " + BitConverter.ToString(frame).Replace("-", ""));
+};
 lobbyProxy.OnIpcClientboundPacket += LobbyIpcClientboundPacket;
 zoneProxy.OnIpcClientboundPacket += ZoneIpcClientboundPacket;
 

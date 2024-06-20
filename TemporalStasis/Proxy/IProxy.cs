@@ -4,6 +4,7 @@ using TemporalStasis.Structs;
 namespace TemporalStasis.Proxy;
 
 public interface IProxy {
+    public delegate void RawFrameInterceptor(byte[] frame, ConnectionType type);
     public delegate void RawPacketInterceptor(int id, ref RawInterceptedPacket packet, ref bool dropped, ConnectionType type);
     public delegate void IpcPacketInterceptor(int id, ref IpcInterceptedPacket packet, ref bool dropped, ConnectionType type);
     
