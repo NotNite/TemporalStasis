@@ -145,6 +145,7 @@ public class ZoneProxyClient {
                 foreach (var packet in survivedPackets) {
                     await newData.WriteStructAsync(packet.SegmentHeader);
                     await newData.WriteBytesAsync(packet.Data);
+                    await newData.FlushAsync();
                 }
 
                 data = newData.ToArray();
@@ -164,6 +165,7 @@ public class ZoneProxyClient {
             using (var frameStream = new MemoryStream()) {
                 await frameStream.WriteStructAsync(newHeader);
                 await frameStream.WriteBytesAsync(data);
+                await frameStream.FlushAsync();
                 this.frame.Invoke(frameStream.ToArray(), serverbound);
             }
 

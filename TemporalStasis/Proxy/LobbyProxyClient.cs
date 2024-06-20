@@ -56,10 +56,7 @@ public class LobbyProxyClient {
 
     public async Task SendPacketAsync(RawInterceptedPacket packet, bool serverbound) {
         if (this.brokefish is not null && packet.SegmentHeader.SegmentType == SegmentType.Ipc) {
-            var newPacketData = new byte[packet.Data.Length - 0x10];
-            Array.Copy(packet.Data, 0, newPacketData, 0, newPacketData.Length);
-            this.brokefish.Decrypt(ref newPacketData);
-            Array.Copy(newPacketData, 0, packet.Data, 0, newPacketData.Length);
+            this.brokefish.Encipher(packet.Data, 0, packet.Data.Length);
         }
 
         await this.semaphore.WaitAsync();
@@ -121,10 +118,7 @@ public class LobbyProxyClient {
 
                 // Slow, but it works for now
                 if (shouldRecrypt) {
-                    var newPacketData = new byte[packet.Data.Length - 0x10];
-                    Array.Copy(packet.Data, 0, newPacketData, 0, newPacketData.Length);
-                    this.brokefish!.Decrypt(ref newPacketData);
-                    Array.Copy(newPacketData, 0, packet.Data, 0, newPacketData.Length);
+                    this.brokefish!.Decipher(packet.Data, 0, packet.Data.Length);
                 }
 
                 var dropped = false;
@@ -142,13 +136,11 @@ public class LobbyProxyClient {
                 packet.Revalidate();
                 await rawPacket.WriteStructAsync(packet.SegmentHeader);
                 await rawPacket.WriteBytesAsync(packet.Data);
+                await rawPacket.FlushAsync();
                 rawPacketSize += (int) packet.SegmentHeader.Size;
 
                 if (shouldRecrypt) {
-                    var newPacketData = new byte[packet.Data.Length - 0x10];
-                    Array.Copy(packet.Data, 0, newPacketData, 0, newPacketData.Length);
-                    newPacketData = this.brokefish!.Encrypt(newPacketData);
-                    Array.Copy(newPacketData, 0, packet.Data, 0, newPacketData.Length);
+                    this.brokefish!.Encipher(packet.Data, 0, packet.Data.Length);
                 }
 
                 if (!dropped) survivedPackets.Add(packet);
@@ -173,6 +165,7 @@ public class LobbyProxyClient {
 
             rawPacket.Seek(0, SeekOrigin.Begin);
             await rawPacket.WriteStructAsync(newHeader);
+            await rawPacket.FlushAsync();
 
             this.frame.Invoke(rawPacket.ToArray(), serverbound);
 
