@@ -104,9 +104,9 @@ public class LobbyProxyClient {
                     baseKey[3] = 0x12;
                     BitConverter.GetBytes(key).CopyTo(baseKey, 4);
 
-                    // Game version, this will need changing in the future (6100)
-                    baseKey[8] = 0xd4;
-                    baseKey[9] = 0x17;
+                    // Game version, this will need changing in the future (7000)
+                    baseKey[8] = 0x58;
+                    baseKey[9] = 0x1b;
                     keyPhrase.CopyTo(baseKey, 0xc);
 
                     var encKey = MD5.Create().ComputeHash(baseKey);
