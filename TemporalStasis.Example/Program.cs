@@ -16,10 +16,8 @@ lobbyProxy.ZoneProxy = zoneProxy;
 
 void LobbyIpcClientboundPacket(int id, ref IpcInterceptedPacket packet, ref bool dropped, ConnectionType type) {
     if (packet.IpcHeader.Opcode == 2) {
-        Console.WriteLine("Lobby queue status received...");
-        var playersInQueue = BitConverter.GetBytes((ushort) 42069);
-        packet.Data[12] = playersInQueue[0];
-        packet.Data[13] = playersInQueue[1];
+        var playersInQueue = BitConverter.ToUInt16(packet.Data.AsSpan()[12..14]);
+        Console.WriteLine("Lobby queue status received: " + playersInQueue);
     }
 }
 
