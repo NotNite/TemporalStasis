@@ -17,9 +17,7 @@ public class ZoneProxy : IZoneProxy {
 
     /// <param name="oodleFactory">A factory for <see cref="IOodle"/> instances.</param>
     /// <param name="listenEndpoint">The endpoint the proxy will listen on.</param>
-    /// <param name="publicEndpoint">
-    /// The endpoint the lobby server will send to clients to connect to. Defaults to <see cref="listenEndpoint"/>.
-    /// </param>
+    /// <param name="publicEndpoint">The public endpoint of the zone proxy. <seealso cref="IZoneProxy.PublicEndpoint"/></param>
     public ZoneProxy(
         IOodleFactory oodleFactory,
         IPEndPoint listenEndpoint,
@@ -44,6 +42,7 @@ public class ZoneProxy : IZoneProxy {
     }
 
     private async Task HandleConnection(TcpClient client, CancellationToken cancellationToken = default) {
+        // nextServer can't be reset here since there are two connections (zone and chat)
         if (this.nextServer is null) throw new Exception("Connection received without next server specified");
         using var connection = new ZoneConnection(client, this.nextServer, this.oodleFactory);
         this.OnClientConnected?.Invoke(connection);

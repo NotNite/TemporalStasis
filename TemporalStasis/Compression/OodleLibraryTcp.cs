@@ -37,8 +37,6 @@ internal partial class OodleLibraryTcp : IOodle {
         Span<byte> state, Span<byte> shared, ReadOnlySpan<byte> raw, int rawSize, Span<byte> compressed
     );
 
-    private readonly Lock @lock = new();
-
     private readonly int stateSize;
     private readonly int sharedSize;
     private readonly byte[] state;
@@ -57,16 +55,12 @@ internal partial class OodleLibraryTcp : IOodle {
     }
 
     public int Compress(Span<byte> input, Span<byte> output) {
-        lock (this.@lock) {
-            return OodleTcpEncode(this.state, this.shared, input, input.Length, output);
-        }
+        return OodleTcpEncode(this.state, this.shared, input, input.Length, output);
     }
 
     public void Decompress(Span<byte> input, Span<byte> output, int decompressedSize) {
-        lock (this.@lock) {
-            var result = OodleTcpDecode(this.state, this.shared, input, input.Length, output, decompressedSize);
-            if (!result) throw new Exception("Failed to decompress data with Oodle");
-        }
+        var result = OodleTcpDecode(this.state, this.shared, input, input.Length, output, decompressedSize);
+        if (!result) throw new Exception("Failed to decompress data with Oodle");
     }
 
     public void Dispose() { }

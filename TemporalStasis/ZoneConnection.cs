@@ -48,108 +48,103 @@ internal sealed class ZoneConnection(
         CancellationToken cancellationToken = default
     ) {
         // Constant buffers that we re-use to be speedy
-        // Oodle might be able to decompress/recompress in place but I'm not too sure
-        var oodleBuffer = new byte[IConnection.BufferSize].AsMemory();
-        var readBuffer = new byte[IConnection.BufferSize].AsMemory();
-        var writeBuffer = new byte[IConnection.BufferSize].AsMemory();
+        Memory<byte> oodleBuffer = new byte[IConnection.BufferSize];
+        Memory<byte> readBuffer = new byte[IConnection.BufferSize];
+        Memory<byte> writeBuffer = new byte[IConnection.BufferSize];
 
         using var readOodle = oodleFactory.Create();
         using var writeOodle = oodleFactory.Create();
 
         while (src.CanRead && dest.CanWrite && !cancellationToken.IsCancellationRequested) {
-            await src.ReadExactlyAsync(readBuffer[..FrameHeader.StructSize], cancellationToken);
-
-            var writePos = FrameHeader.StructSize;
+            bool isOodle;
 
             {
-                // Read the rest of the frame
-                ref var frameHeader = ref MemoryMarshal.AsRef<FrameHeader>(readBuffer.Span);
+                // Read the frame header
+                var frameHeaderMemory = readBuffer[..FrameHeader.StructSize];
+                await src.ReadExactlyAsync(frameHeaderMemory, cancellationToken);
+                ref var frameHeader = ref MemoryMarshal.AsRef<FrameHeader>(frameHeaderMemory.Span);
 
-                var size = (int) frameHeader.Size;
-                var compressionType = frameHeader.CompressionType;
-                var decompressedSize = frameHeader.DecompressedSize;
                 if (this.Type is null && frameHeader.ConnectionType != ConnectionType.None) {
                     this.Type = frameHeader.ConnectionType;
                 }
 
-                if (compressionType is CompressionType.Oodle) {
-                    var span = oodleBuffer[..(size - FrameHeader.StructSize)];
-                    await src.ReadExactlyAsync(span, cancellationToken);
+                // `size` includes the frame header struct, don't have to subtract here
+                var size = (int) frameHeader.Size;
+                var decompressedSize = (int) frameHeader.DecompressedSize;
+                isOodle = frameHeader.CompressionType is CompressionType.Oodle;
+
+                if (isOodle) {
+                    // Read into a separate buffer
+                    var oodleMemory = oodleBuffer[..(size - FrameHeader.StructSize)];
+                    await src.ReadExactlyAsync(oodleMemory, cancellationToken);
 
                     await semaphore.WaitAsync(cancellationToken);
                     try {
-                        readOodle.Decompress(span.Span,
-                            readBuffer.Span[FrameHeader.StructSize..],
-                            (int) decompressedSize);
+                        // Decompress into original buffer
+                        readOodle.Decompress(
+                            oodleMemory.Span,
+                            readBuffer.Span.Slice(FrameHeader.StructSize, decompressedSize),
+                            decompressedSize
+                        );
                     } finally {
                         semaphore.Release();
                     }
                 } else {
-                    var span = readBuffer[FrameHeader.StructSize..size];
-                    await src.ReadExactlyAsync(span, cancellationToken);
+                    // Read directly into the buffer
+                    await src.ReadExactlyAsync(readBuffer[FrameHeader.StructSize..size], cancellationToken);
                 }
             }
 
             // This is done twice because we can't bring the `ref` across async boundaries
-            ref var readFrameHeader = ref MemoryMarshal.AsRef<FrameHeader>(readBuffer.Span);
-            readBuffer.Span[..FrameHeader.StructSize].CopyTo(writeBuffer.Span); // Copy to write buffer
+            var readFrameHeaderMemory = readBuffer[..FrameHeader.StructSize];
+            ref var readFrameHeader = ref MemoryMarshal.AsRef<FrameHeader>(readFrameHeaderMemory.Span);
+            readFrameHeaderMemory.CopyTo(writeBuffer[..FrameHeader.StructSize]); // Copy to write buffer
 
             // Loop for segments
             var readPos = FrameHeader.StructSize;
+            var writePos = FrameHeader.StructSize;
             var writeCount = (ushort) 0;
             for (var i = 0; i < readFrameHeader.Count; i++) {
-                var segmentHeaderSpan = readBuffer.Span[readPos..(readPos + SegmentHeader.StructSize)];
+                var segmentHeaderMemory = readBuffer.Slice(readPos, SegmentHeader.StructSize);
                 // Copy to write buffer
-                segmentHeaderSpan.CopyTo(writeBuffer.Span[writePos..(writePos + SegmentHeader.StructSize)]);
+                segmentHeaderMemory.CopyTo(writeBuffer.Slice(writePos, SegmentHeader.StructSize));
 
-                ref var segmentHeader = ref MemoryMarshal.AsRef<SegmentHeader>(segmentHeaderSpan);
+                ref var segmentHeader = ref MemoryMarshal.AsRef<SegmentHeader>(segmentHeaderMemory.Span);
                 var segmentSize = (int) segmentHeader.Size;
 
-                var segmentDataLen = (int) segmentHeader.Size - SegmentHeader.StructSize;
-                var readSegmentDataStart = readPos + SegmentHeader.StructSize;
-                var readSegmentDataEnd = readSegmentDataStart + segmentDataLen;
-                var segmentData = readBuffer[readSegmentDataStart..readSegmentDataEnd];
-
-                // Not using readPos anymore so we can increment it
-                readPos += segmentSize;
+                var segmentDataStart = readPos + SegmentHeader.StructSize;
+                var segmentDataLen = segmentSize - SegmentHeader.StructSize;
+                var segmentData = readBuffer.Slice(segmentDataStart, segmentDataLen);
 
                 var isIpc = segmentHeader.SegmentType is SegmentType.Ipc;
                 var segmentDropped = false;
                 try {
-                    var packetSegment = new PacketSegment() {
-                        FrameHeader = ref readFrameHeader,
-                        SegmentHeader = ref segmentHeader,
-                        Data = segmentData.Span
-                    };
-                    this.OnPacketSegmentReceived?.Invoke(ref packetSegment, destinationType, ref segmentDropped);
+                    var packet = new PacketSegment(ref readFrameHeader, ref segmentHeader, ref segmentData);
+                    this.OnPacketSegmentReceived?.Invoke(ref packet, destinationType, ref segmentDropped);
                 } catch {
                     // ignored
                 }
 
                 if (isIpc && !segmentDropped) {
-                    ref var ipcHeader =
-                        ref MemoryMarshal.AsRef<IpcHeader>(segmentData.Span[..IpcHeader.StructSize]);
-                    var ipcDataStart = IpcHeader.StructSize;
-                    var ipcDataLen = segmentSize - IpcHeader.StructSize - SegmentHeader.StructSize;
-                    var ipcDataEnd = ipcDataStart + ipcDataLen;
-                    var ipcData = segmentData[ipcDataStart..ipcDataEnd];
+                    var ipcHeaderMemory = readBuffer.Slice(segmentDataStart, IpcHeader.StructSize);
+                    ref var ipcHeader = ref MemoryMarshal.AsRef<IpcHeader>(ipcHeaderMemory.Span);
+
+                    var ipcDataStart = segmentDataStart + IpcHeader.StructSize;
+                    var ipcDataLen = segmentDataLen - IpcHeader.StructSize;
+                    var ipcData = readBuffer.Slice(ipcDataStart, ipcDataLen);
 
                     try {
-                        var ipcPacket = new IpcPacket() {
-                            FrameHeader = ref readFrameHeader,
-                            SegmentHeader = ref segmentHeader,
-                            IpcHeader = ref ipcHeader,
-                            Data = ipcData.Span
-                        };
-                        this.OnIpcPacketReceived?.Invoke(ref ipcPacket, destinationType, ref segmentDropped);
+                        var packet = new IpcPacket(ref readFrameHeader, ref segmentHeader, ref ipcHeader, ref ipcData);
+                        this.OnIpcPacketReceived?.Invoke(ref packet, destinationType, ref segmentDropped);
                     } catch {
                         // ignored
                     }
                 }
 
+                readPos += segmentSize;
                 if (!segmentDropped) {
                     var segmentDataPos = writePos + SegmentHeader.StructSize;
-                    segmentData.CopyTo(writeBuffer[segmentDataPos..(segmentDataPos + segmentDataLen)]);
+                    segmentData.CopyTo(writeBuffer.Slice(segmentDataPos, segmentDataLen));
                     writePos += segmentSize;
                     writeCount++;
                 }
@@ -166,38 +161,32 @@ internal sealed class ZoneConnection(
             writeFrameHeader.Count = writeCount;
 
             var frameDropped = false;
-            var writeData = writeBuffer[FrameHeader.StructSize..writePos];
             try {
-                var packetFrame = new PacketFrame() {
-                    FrameHeader = ref writeFrameHeader,
-                    Data = writeData.Span
-                };
-                this.OnPacketFrameReceived?.Invoke(ref packetFrame, destinationType, ref frameDropped);
+                var frameDataMemory = writeBuffer[FrameHeader.StructSize..writePos];
+                var packet = new PacketFrame(ref writeFrameHeader, ref frameDataMemory);
+                this.OnPacketFrameReceived?.Invoke(ref packet, destinationType, ref frameDropped);
             } catch {
                 // ignored
             }
             if (frameDropped) continue;
 
-            if (writeFrameHeader.CompressionType is CompressionType.Oodle) {
-                // Re-compress
-                await semaphore.WaitAsync(cancellationToken);
-                try {
-                    var size = writeOodle.Compress(writeData.Span, oodleBuffer.Span);
-                    writeFrameHeader.Size = (uint) (FrameHeader.StructSize + size);
+            // Finally, send it off
+            await semaphore.WaitAsync(cancellationToken);
+            try {
+                if (isOodle) {
+                    // Recompress into another buffer
+                    var oodleData = writeBuffer[FrameHeader.StructSize..writePos];
+                    var compressedSize = writeOodle.Compress(oodleData.Span, oodleBuffer.Span);
+                    writeFrameHeader.Size = (uint) (FrameHeader.StructSize + compressedSize);
 
                     await dest.WriteAsync(writeBuffer[..FrameHeader.StructSize], cancellationToken);
-                    await dest.WriteAsync(oodleBuffer[..size], cancellationToken);
-                } finally {
-                    semaphore.Release();
-                }
-            } else {
-                // Send off normally
-                await semaphore.WaitAsync(cancellationToken);
-                try {
+                    await dest.WriteAsync(oodleBuffer[..compressedSize], cancellationToken);
+                } else {
+                    // Write like normal
                     await dest.WriteAsync(writeBuffer[..writePos], cancellationToken);
-                } finally {
-                    semaphore.Release();
                 }
+            } finally {
+                semaphore.Release();
             }
         }
     }

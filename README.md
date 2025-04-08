@@ -6,12 +6,12 @@ Unlike traditional packet capturing tools, Temporal Stasis **stands between the 
 
 Here's a simple comparison between other packet capturing tools:
 
-| Project                  | Usable as a library | Works without injection | Supports packet modification |
-|--------------------------|---------------------|-------------------------|------------------------------|
-| Temporal Stasis          | :white_check_mark:  | :white_check_mark:      | :white_check_mark:           |
-| [Deucalion][deucalion]   | :white_check_mark:  | :x:                     | :x:                          |
-| [Machina][machina]       | :white_check_mark:  | :warning:[^1]           | :x:                          |
-| [Chronofoil][chronofoil] | :x:                 | :x:                     | :x:                          |
+| Project                  | Works without Pcap  | Usable as a library     | Works without injection      | Supports packet modification |
+|--------------------------|---------------------|-------------------------|------------------------------|------------------------------|
+| Temporal Stasis          | :white_check_mark:  | :white_check_mark:      | :white_check_mark:           | :white_check_mark:           |
+| [Deucalion][deucalion]   | :white_check_mark:  | :white_check_mark:      | :x:                          | :x:                          |
+| [Chronofoil][chronofoil] | :white_check_mark:  | :x:                     | :x:                          | :x:                          |
+| [Machina][machina]       | :x:                 | :white_check_mark:      | :warning:[^1]                | :x:                          |
 
 [^1]: Machina versions v2.4.2.2 and above require Deucalion to deobfuscate some obfuscated packets.
 
@@ -21,7 +21,7 @@ Here's a simple comparison between other packet capturing tools:
 
 ## Usage
 
-Temporal Stasis is a library, and you're intended to use it in your own code. There's an example project in this repository (`TemporalStasis.Example`) that can show you around the API.
+Temporal Stasis is a library, and you're intended to use it in your own code. There's an example project in this repository (`TemporalStasis.Example`) that can show you around the API. This is a rewrite of the original Temporal Stasis, and some features (e.g. sending custom packets) aren't implemented yet.
 
 ### Requirements
 

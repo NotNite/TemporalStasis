@@ -53,50 +53,46 @@ internal sealed class LobbyConnection(
         CancellationToken cancellationToken = default
     ) {
         // Constant buffers that we re-use to be speedy
-        var readBuffer = new byte[IConnection.BufferSize].AsMemory();
-        var writeBuffer = new byte[IConnection.BufferSize].AsMemory();
+        Memory<byte> readBuffer = new byte[IConnection.BufferSize];
+        Memory<byte> writeBuffer = new byte[IConnection.BufferSize];
 
         while (src.CanRead && dest.CanWrite && !cancellationToken.IsCancellationRequested) {
-            await src.ReadExactlyAsync(readBuffer[..FrameHeader.StructSize], cancellationToken);
-
-            var writePos = FrameHeader.StructSize;
-
             {
-                // Read the rest of the frame
-                ref var frameHeader = ref MemoryMarshal.AsRef<FrameHeader>(readBuffer.Span);
+                // Read the frame header
+                var frameHeaderMemory = readBuffer[..FrameHeader.StructSize];
+                await src.ReadExactlyAsync(frameHeaderMemory, cancellationToken);
+                ref var frameHeader = ref MemoryMarshal.AsRef<FrameHeader>(frameHeaderMemory.Span);
 
-                var size = (int) frameHeader.Size;
                 if (this.Type is null && frameHeader.ConnectionType != ConnectionType.None) {
                     this.Type = frameHeader.ConnectionType;
                 }
 
-                var span = readBuffer[FrameHeader.StructSize..size];
-                await src.ReadExactlyAsync(span, cancellationToken);
+                // `size` includes the frame header struct, don't have to subtract here
+                var size = (int) frameHeader.Size;
+                var frameDataMemory = readBuffer[FrameHeader.StructSize..size];
+                await src.ReadExactlyAsync(frameDataMemory, cancellationToken);
             }
 
             // This is done twice because we can't bring the `ref` across async boundaries
-            ref var readFrameHeader = ref MemoryMarshal.AsRef<FrameHeader>(readBuffer.Span);
-
-            readBuffer.Span[..FrameHeader.StructSize].CopyTo(writeBuffer.Span); // Copy to write buffer
+            var readFrameHeaderMemory = readBuffer[..FrameHeader.StructSize];
+            ref var readFrameHeader = ref MemoryMarshal.AsRef<FrameHeader>(readFrameHeaderMemory.Span);
+            readFrameHeaderMemory.CopyTo(writeBuffer[..FrameHeader.StructSize]); // Copy to write buffer
 
             // Loop for segments
             var readPos = FrameHeader.StructSize;
+            var writePos = FrameHeader.StructSize;
             var writeCount = (ushort) 0;
             for (var i = 0; i < readFrameHeader.Count; i++) {
-                var segmentHeaderSpan = readBuffer.Span[readPos..(readPos + SegmentHeader.StructSize)];
+                var segmentHeaderMemory = readBuffer.Slice(readPos, SegmentHeader.StructSize);
                 // Copy to write buffer
-                segmentHeaderSpan.CopyTo(writeBuffer.Span[writePos..(writePos + SegmentHeader.StructSize)]);
+                segmentHeaderMemory.CopyTo(writeBuffer.Slice(writePos, SegmentHeader.StructSize));
 
-                ref var segmentHeader = ref MemoryMarshal.AsRef<SegmentHeader>(segmentHeaderSpan);
+                ref var segmentHeader = ref MemoryMarshal.AsRef<SegmentHeader>(segmentHeaderMemory.Span);
                 var segmentSize = (int) segmentHeader.Size;
 
-                var segmentDataLen = (int) segmentHeader.Size - SegmentHeader.StructSize;
-                var readSegmentDataStart = readPos + SegmentHeader.StructSize;
-                var readSegmentDataEnd = readSegmentDataStart + segmentDataLen;
-                var segmentData = readBuffer[readSegmentDataStart..readSegmentDataEnd];
-
-                // Not using readPos anymore so we can increment it
-                readPos += segmentSize;
+                var segmentDataStart = readPos + SegmentHeader.StructSize;
+                var segmentDataLen = segmentSize - SegmentHeader.StructSize;
+                var segmentData = readBuffer.Slice(segmentDataStart, segmentDataLen);
 
                 // Initialize Blowfish if we haven't already
                 if (segmentHeader.SegmentType is SegmentType.EncryptionInit
@@ -112,23 +108,19 @@ internal sealed class LobbyConnection(
 
                 var segmentDropped = false;
                 try {
-                    var packetSegment = new PacketSegment() {
-                        FrameHeader = ref readFrameHeader,
-                        SegmentHeader = ref segmentHeader,
-                        Data = segmentData.Span
-                    };
-                    this.OnPacketSegmentReceived?.Invoke(ref packetSegment, destinationType, ref segmentDropped);
+                    var packet = new PacketSegment(ref readFrameHeader, ref segmentHeader, ref segmentData);
+                    this.OnPacketSegmentReceived?.Invoke(ref packet, destinationType, ref segmentDropped);
                 } catch {
                     // ignored
                 }
 
                 if (isIpc && !segmentDropped) {
-                    ref var ipcHeader =
-                        ref MemoryMarshal.AsRef<IpcHeader>(segmentData.Span[..IpcHeader.StructSize]);
-                    var ipcDataStart = IpcHeader.StructSize;
-                    var ipcDataLen = segmentSize - IpcHeader.StructSize - SegmentHeader.StructSize;
-                    var ipcDataEnd = ipcDataStart + ipcDataLen;
-                    var ipcData = segmentData[ipcDataStart..ipcDataEnd];
+                    var ipcHeaderMemory = readBuffer.Slice(segmentDataStart, IpcHeader.StructSize);
+                    ref var ipcHeader = ref MemoryMarshal.AsRef<IpcHeader>(ipcHeaderMemory.Span);
+
+                    var ipcDataStart = segmentDataStart + IpcHeader.StructSize;
+                    var ipcDataLen = segmentDataLen - IpcHeader.StructSize;
+                    var ipcData = readBuffer.Slice(ipcDataStart, ipcDataLen);
 
                     if (zoneProxy is not null && ipcHeader.Opcode == proxyConfig.EnterWorldOpcode &&
                         destinationType is DestinationType.Clientbound) {
@@ -140,23 +132,17 @@ internal sealed class LobbyConnection(
                     }
 
                     try {
-                        var ipcPacket = new IpcPacket() {
-                            FrameHeader = ref readFrameHeader,
-                            SegmentHeader = ref segmentHeader,
-                            IpcHeader = ref ipcHeader,
-                            Data = ipcData.Span
-                        };
-                        this.OnIpcPacketReceived?.Invoke(ref ipcPacket, destinationType, ref segmentDropped);
+                        var packet = new IpcPacket(ref readFrameHeader, ref segmentHeader, ref ipcHeader, ref ipcData);
+                        this.OnIpcPacketReceived?.Invoke(ref packet, destinationType, ref segmentDropped);
                     } catch {
                         // ignored
                     }
                 }
 
-                if (isEncrypted) this.brokefish!.EncipherPadded(segmentData.Span);
-
+                readPos += segmentSize;
                 if (!segmentDropped) {
                     var segmentDataPos = writePos + SegmentHeader.StructSize;
-                    segmentData.CopyTo(writeBuffer[segmentDataPos..(segmentDataPos + segmentDataLen)]);
+                    segmentData.CopyTo(writeBuffer.Slice(segmentDataPos, segmentDataLen));
                     writePos += segmentSize;
                     writeCount++;
                 }
@@ -174,15 +160,31 @@ internal sealed class LobbyConnection(
 
             var frameDropped = false;
             try {
-                var packetFrame = new PacketFrame() {
-                    FrameHeader = ref writeFrameHeader,
-                    Data = writeBuffer[FrameHeader.StructSize..writePos].Span
-                };
-                this.OnPacketFrameReceived?.Invoke(ref packetFrame, destinationType, ref frameDropped);
+                var frameDataMemory = writeBuffer[FrameHeader.StructSize..writePos];
+                var packet = new PacketFrame(ref writeFrameHeader, ref frameDataMemory);
+                this.OnPacketFrameReceived?.Invoke(ref packet, destinationType, ref frameDropped);
             } catch {
                 // ignored
             }
             if (frameDropped) continue;
+
+            // Re-encrypt Blowfish, we do this after the event so the event frame is decrypted
+            var encryptPos = FrameHeader.StructSize;
+            for (var i = 0; i < writeFrameHeader.Count; i++) {
+                var segmentHeaderMemory = writeBuffer.Slice(encryptPos, SegmentHeader.StructSize);
+                ref var segmentHeader = ref MemoryMarshal.AsRef<SegmentHeader>(segmentHeaderMemory.Span);
+                var segmentSize = (int) segmentHeader.Size;
+
+                var segmentDataStart = encryptPos + SegmentHeader.StructSize;
+                var segmentDataLen = segmentSize - SegmentHeader.StructSize;
+                var segmentData = writeBuffer.Slice(segmentDataStart, segmentDataLen);
+
+                var isIpc = segmentHeader.SegmentType is SegmentType.Ipc;
+                var isEncrypted = this.brokefish is not null && isIpc;
+                if (isEncrypted) this.brokefish!.EncipherPadded(segmentData.Span);
+
+                encryptPos += segmentSize;
+            }
 
             // Finally, send it off
             await semaphore.WaitAsync(cancellationToken);
