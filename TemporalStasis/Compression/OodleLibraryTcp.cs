@@ -54,11 +54,11 @@ internal partial class OodleLibraryTcp : IOodle {
         OodleTcpTrain(this.state, this.shared, 0, 0, 0);
     }
 
-    public int Compress(Span<byte> input, Span<byte> output) {
+    public int Compress(ReadOnlySpan<byte> input, Span<byte> output) {
         return OodleTcpEncode(this.state, this.shared, input, input.Length, output);
     }
 
-    public void Decompress(Span<byte> input, Span<byte> output, int decompressedSize) {
+    public void Decompress(ReadOnlySpan<byte> input, Span<byte> output, int decompressedSize) {
         var result = OodleTcpDecode(this.state, this.shared, input, input.Length, output, decompressedSize);
         if (!result) throw new Exception("Failed to decompress data with Oodle");
     }

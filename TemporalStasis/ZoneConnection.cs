@@ -24,6 +24,9 @@ internal sealed class ZoneConnection(
     private readonly SemaphoreSlim clientSemaphore = new(1);
     private readonly SemaphoreSlim serverSemaphore = new(1);
 
+    private readonly IOodle clientWriteOodle = oodleFactory.Create();
+    private readonly IOodle serverWriteOodle = oodleFactory.Create();
+
     public async Task StartAsync(CancellationToken cancellationToken = default) {
         await this.serverTcp.ConnectAsync(originalEndpoint, cancellationToken);
         this.serverStream = this.serverTcp.GetStream();
@@ -53,7 +56,7 @@ internal sealed class ZoneConnection(
         Memory<byte> writeBuffer = new byte[IConnection.BufferSize];
 
         using var readOodle = oodleFactory.Create();
-        using var writeOodle = oodleFactory.Create();
+        var writeOodle = destinationType is DestinationType.Clientbound ? this.clientWriteOodle : this.serverWriteOodle;
 
         while (src.CanRead && dest.CanWrite && !cancellationToken.IsCancellationRequested) {
             bool isOodle;
@@ -191,23 +194,76 @@ internal sealed class ZoneConnection(
         }
     }
 
-    public Task SendPacketFrameAsync(
-        DestinationType destinationType, FrameHeader frameHeader, ReadOnlyMemory<byte> data
+    public async Task SendPacketFrameAsync(
+        DestinationType destinationType,
+        FrameHeader frameHeader,
+        ReadOnlyMemory<byte> data,
+        CancellationToken cancellationToken = default
     ) {
-        throw new NotImplementedException();
+        var dest = destinationType is DestinationType.Clientbound ? this.clientStream : this.serverStream;
+        if (dest is null) throw new Exception("Network stream for destination not initialized");
+        var semaphore = destinationType is DestinationType.Clientbound ? this.clientSemaphore : this.serverSemaphore;
+        var oodle = destinationType is DestinationType.Clientbound ? this.clientWriteOodle : this.serverWriteOodle;
+
+        frameHeader.Timestamp = (ulong) DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        frameHeader.Count = 1;
+        if (this.Type is { } type) frameHeader.ConnectionType = type;
+
+        Memory<byte> copied = new byte[FrameHeader.StructSize + data.Length];
+        MemoryMarshal.Write(copied.Span[..FrameHeader.StructSize], frameHeader);
+
+        if (frameHeader.CompressionType is CompressionType.Oodle) {
+            var compressed = new byte[data.Length];
+            var len = oodle.Compress(data.Span, compressed);
+            compressed[..len].CopyTo(copied[FrameHeader.StructSize..]);
+
+            frameHeader.Size = (uint) (FrameHeader.StructSize + len);
+        } else {
+            data.CopyTo(copied[FrameHeader.StructSize..]);
+
+            frameHeader.Size = (uint) (FrameHeader.StructSize + data.Length);
+            frameHeader.CompressionType = CompressionType.None; // just in case there's a random value there
+        }
+
+        await semaphore.WaitAsync(cancellationToken);
+        try {
+            await dest.WriteAsync(copied[..(int) frameHeader.Size], cancellationToken);
+        } finally {
+            semaphore.Release();
+        }
     }
 
-    public Task SendPacketSegmentAsync(
-        DestinationType destinationType, SegmentHeader segmentHeader, ReadOnlyMemory<byte> data
+    public async Task SendPacketSegmentAsync(
+        DestinationType destinationType,
+        FrameHeader frameHeader,
+        SegmentHeader segmentHeader,
+        ReadOnlyMemory<byte> data,
+        CancellationToken cancellationToken = default
     ) {
-        throw new NotImplementedException();
+        segmentHeader.Size = (uint) (SegmentHeader.StructSize + data.Length);
+
+        Memory<byte> copied = new byte[SegmentHeader.StructSize + data.Length];
+        MemoryMarshal.Write(copied.Span[..SegmentHeader.StructSize], segmentHeader);
+        data.CopyTo(copied[SegmentHeader.StructSize..]);
+
+        await this.SendPacketFrameAsync(destinationType, frameHeader, copied, cancellationToken);
     }
 
-    public Task SendIpcPacketAsync(
-        DestinationType destinationType, uint sourceActor, uint targetActor,
-        IpcHeader ipcHeader, ReadOnlyMemory<byte> data
+    public async Task SendIpcPacketAsync(
+        DestinationType destinationType,
+        FrameHeader frameHeader,
+        SegmentHeader segmentHeader,
+        IpcHeader ipcHeader,
+        ReadOnlyMemory<byte> data,
+        CancellationToken cancellationToken = default
     ) {
-        throw new NotImplementedException();
+        ipcHeader.Timestamp = (uint) DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        Memory<byte> copied = new byte[IpcHeader.StructSize + data.Length];
+        MemoryMarshal.Write(copied.Span[..IpcHeader.StructSize], ipcHeader);
+        data.CopyTo(copied[IpcHeader.StructSize..]);
+
+        await this.SendPacketSegmentAsync(destinationType, frameHeader, segmentHeader, copied, cancellationToken);
     }
 
     public void Dispose() {
@@ -219,5 +275,8 @@ internal sealed class ZoneConnection(
 
         this.clientSemaphore.Dispose();
         this.serverSemaphore.Dispose();
+
+        this.clientWriteOodle.Dispose();
+        this.serverWriteOodle.Dispose();
     }
 }

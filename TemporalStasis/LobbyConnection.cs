@@ -227,23 +227,73 @@ internal sealed class LobbyConnection(
         return new Brokefish(md5);
     }
 
-    public Task SendPacketFrameAsync(
-        DestinationType destinationType, FrameHeader frameHeader, ReadOnlyMemory<byte> data
+    public async Task SendPacketFrameAsync(
+        DestinationType destinationType,
+        FrameHeader frameHeader,
+        ReadOnlyMemory<byte> data,
+        CancellationToken cancellationToken = default
     ) {
-        throw new NotImplementedException();
+        var dest = destinationType is DestinationType.Clientbound ? this.clientStream : this.serverStream;
+        if (dest is null) throw new Exception("Network stream for destination not initialized");
+        var semaphore = destinationType is DestinationType.Clientbound ? this.clientSemaphore : this.serverSemaphore;
+
+        frameHeader.Timestamp = (ulong) DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        frameHeader.Size = (uint) (FrameHeader.StructSize + data.Length);
+        frameHeader.DecompressedSize = (uint) data.Length;
+        frameHeader.Count = 1;
+        frameHeader.CompressionType = CompressionType.None;
+        if (this.Type is { } type) frameHeader.ConnectionType = type;
+
+        Memory<byte> copied = new byte[FrameHeader.StructSize + data.Length];
+        MemoryMarshal.Write(copied.Span[..FrameHeader.StructSize], frameHeader);
+        data.CopyTo(copied[FrameHeader.StructSize..]);
+
+        await semaphore.WaitAsync(cancellationToken);
+        try {
+            await dest.WriteAsync(copied, cancellationToken);
+        } finally {
+            semaphore.Release();
+        }
     }
 
-    public Task SendPacketSegmentAsync(
-        DestinationType destinationType, SegmentHeader segmentHeader, ReadOnlyMemory<byte> data
+    public async Task SendPacketSegmentAsync(
+        DestinationType destinationType,
+        FrameHeader frameHeader,
+        SegmentHeader segmentHeader,
+        ReadOnlyMemory<byte> data,
+        CancellationToken cancellationToken = default
     ) {
-        throw new NotImplementedException();
+        segmentHeader.Size = (uint) (SegmentHeader.StructSize + data.Length);
+
+        Memory<byte> copied = new byte[SegmentHeader.StructSize + data.Length];
+        MemoryMarshal.Write(copied.Span[..SegmentHeader.StructSize], segmentHeader);
+
+        {
+            var slice = copied[SegmentHeader.StructSize..];
+            data.CopyTo(slice);
+            if (segmentHeader.SegmentType is SegmentType.Ipc && this.brokefish is not null) {
+                this.brokefish.EncipherPadded(slice.Span);
+            }
+        }
+
+        await this.SendPacketFrameAsync(destinationType, frameHeader, copied, cancellationToken);
     }
 
-    public Task SendIpcPacketAsync(
-        DestinationType destinationType, uint sourceActor, uint targetActor,
-        IpcHeader ipcHeader, ReadOnlyMemory<byte> data
+    public async Task SendIpcPacketAsync(
+        DestinationType destinationType,
+        FrameHeader frameHeader,
+        SegmentHeader segmentHeader,
+        IpcHeader ipcHeader,
+        ReadOnlyMemory<byte> data,
+        CancellationToken cancellationToken = default
     ) {
-        throw new NotImplementedException();
+        ipcHeader.Timestamp = (uint) DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        Memory<byte> copied = new byte[IpcHeader.StructSize + data.Length];
+        MemoryMarshal.Write(copied.Span[..IpcHeader.StructSize], ipcHeader);
+        data.CopyTo(copied[IpcHeader.StructSize..]);
+
+        await this.SendPacketSegmentAsync(destinationType, frameHeader, segmentHeader, copied, cancellationToken);
     }
 
     public void Dispose() {

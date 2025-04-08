@@ -11,7 +11,7 @@ public class OodleLibraryFactory : IOodleFactory {
     /// </param>
     public OodleLibraryFactory(string? path = null) {
         // This technically adjusts the whole assembly which isn't great, not much I can do about it though
-        if (path != null) {
+        if (path is not null) {
             NativeLibrary.SetDllImportResolver(Assembly.GetExecutingAssembly(), (name, assembly, searchPath) => {
                 if (name == OodleLibraryName) name = path;
                 return NativeLibrary.Load(name, assembly, searchPath);

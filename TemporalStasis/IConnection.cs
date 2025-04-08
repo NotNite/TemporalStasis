@@ -75,20 +75,31 @@ public interface IConnection : IDisposable {
     /// <summary>Send ("replay") a packet frame to the given destination.</summary>
     /// <remarks>This method assumes the provided data is (if applicable) obfuscated, but not compressed or encrypted.</remarks>
     public Task SendPacketFrameAsync(
-        DestinationType destinationType, FrameHeader frameHeader, ReadOnlyMemory<byte> data
+        DestinationType destinationType,
+        FrameHeader frameHeader,
+        ReadOnlyMemory<byte> data,
+        CancellationToken cancellationToken = default
     );
 
     /// <summary>Send ("replay") a packet segment to the given destination.</summary>
     /// <remarks>This method assumes the provided data is (if applicable) obfuscated, but not encrypted.</remarks>
     public Task SendPacketSegmentAsync(
-        DestinationType destinationType, SegmentHeader segmentHeader, ReadOnlyMemory<byte> data
+        DestinationType destinationType,
+        FrameHeader frameHeader,
+        SegmentHeader segmentHeader,
+        ReadOnlyMemory<byte> data,
+        CancellationToken cancellationToken = default
     );
 
     /// <summary>Send ("replay") an IPC packet to the given destination.</summary>
     /// <remarks>This method assumes the provided data is (if applicable) obfuscated.</remarks>
     public Task SendIpcPacketAsync(
-        DestinationType destinationType, uint sourceActor, uint targetActor,
-        IpcHeader ipcHeader, ReadOnlyMemory<byte> data
+        DestinationType destinationType,
+        FrameHeader frameHeader,
+        SegmentHeader segmentHeader,
+        IpcHeader ipcHeader,
+        ReadOnlyMemory<byte> data,
+        CancellationToken cancellationToken = default
     );
 
     /// <summary>Start and run the connection, continuing until it is cancelled or the client disconnects.</summary>
