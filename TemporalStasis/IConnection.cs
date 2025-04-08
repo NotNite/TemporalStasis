@@ -32,6 +32,8 @@ public interface IConnection : IDisposable {
     /// <inheritdoc cref="IpcPacketReceivedDelegate"/>
     public event IpcPacketReceivedDelegate? OnIpcPacketReceived;
 
+    public ConnectionType? Type { get; }
+
     /// <summary>Send ("replay") a packet frame to the given destination.</summary>
     /// <remarks>This method assumes the data is not compressed or encrypted.</remarks>
     public Task SendPacketFrameAsync(

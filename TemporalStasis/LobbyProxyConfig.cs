@@ -12,7 +12,7 @@ public sealed class LobbyProxyConfig {
     public int EnterWorldPortOffset { get; set; } = 94;
 
     /// <summary>The offset in the EnterWorld packet that contains the zone server's address.</summary>
-    public int EnterWorldAddressOffset { get; set; } = 96;
+    public int EnterWorldHostOffset { get; set; } = 96;
 
     /// <summary>The size of the zone server's address in the EnterWorld packet.</summary>
     public int EnterWorldHostSize { get; set; } = 48;

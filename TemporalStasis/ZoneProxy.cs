@@ -1,29 +1,33 @@
 ﻿using System.Net;
 using System.Net.Sockets;
+using TemporalStasis.Compression;
 
 namespace TemporalStasis;
 
-/// <summary>A proxy for the FFXIV lobby server.</summary>
-public sealed class LobbyProxy : ILobbyProxy {
+public class ZoneProxy : IZoneProxy {
     public event IProxy.ClientConnectedDelegate? OnClientConnected;
     public event IProxy.ClientDisconnectedDelegate? OnClientDisconnected;
 
-    public LobbyProxyConfig Config { get; set; } = new();
-    public IZoneProxy? ZoneProxy { get; set; }
+    public IPEndPoint PublicEndpoint { get; }
 
-    private readonly IPEndPoint originalEndpoint;
+    private readonly IOodleFactory oodleFactory;
     private readonly IPEndPoint listenEndpoint;
     private readonly TcpListener listener;
+    private IPEndPoint? nextServer;
 
-    /// <param name="originalEndpoint">
-    /// The endpoint of the original lobby server, where connections will be proxied to.
+    /// <param name="oodleFactory">A factory for <see cref="IOodle"/> instances.</param>
+    /// <param name="listenEndpoint">The endpoint the proxy will listen on.</param>
+    /// <param name="publicEndpoint">
+    /// The endpoint the lobby server will send to clients to connect to. Defaults to <see cref="listenEndpoint"/>.
     /// </param>
-    /// <param name="listenEndpoint">
-    /// The endpoint the proxy will listen on, where clients will connect to.
-    /// </param>
-    public LobbyProxy(IPEndPoint originalEndpoint, IPEndPoint listenEndpoint) {
-        this.originalEndpoint = originalEndpoint;
+    public ZoneProxy(
+        IOodleFactory oodleFactory,
+        IPEndPoint listenEndpoint,
+        IPEndPoint? publicEndpoint = null
+    ) {
+        this.oodleFactory = oodleFactory;
         this.listenEndpoint = listenEndpoint;
+        this.PublicEndpoint = publicEndpoint ?? this.listenEndpoint;
         this.listener = new TcpListener(this.listenEndpoint);
     }
 
@@ -40,11 +44,15 @@ public sealed class LobbyProxy : ILobbyProxy {
     }
 
     private async Task HandleConnection(TcpClient client, CancellationToken cancellationToken = default) {
-        using var connection = new LobbyConnection(client, this.originalEndpoint, this.Config, this.ZoneProxy);
+        if (this.nextServer is null) throw new Exception("Connection received without next server specified");
+        using var connection = new ZoneConnection(client, this.nextServer, this.oodleFactory);
         this.OnClientConnected?.Invoke(connection);
         await Util.WrapTcpErrors(() => connection.StartAsync(cancellationToken));
         this.OnClientDisconnected?.Invoke(connection);
     }
+
+    public void SetNextServer(IPEndPoint server)
+        => this.nextServer = server;
 
     public void Dispose() {
         this.listener.Stop();

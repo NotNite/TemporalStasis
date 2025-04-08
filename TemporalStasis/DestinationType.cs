@@ -1,4 +1,4 @@
-﻿namespace TemporalStasis.Structs;
+﻿namespace TemporalStasis;
 
 public enum DestinationType : byte {
     Clientbound,

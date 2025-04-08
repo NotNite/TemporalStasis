@@ -1,18 +1,15 @@
 ﻿using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Text;
-using TemporalStasis.Encryption;
+using TemporalStasis.Compression;
 using TemporalStasis.Structs;
 
 namespace TemporalStasis;
 
-internal sealed class LobbyConnection(
+internal sealed class ZoneConnection(
     TcpClient clientTcp,
     IPEndPoint originalEndpoint,
-    LobbyProxyConfig proxyConfig,
-    IZoneProxy? zoneProxy
+    IOodleFactory oodleFactory
 ) : IConnection {
     public event IConnection.PacketFrameReceivedDelegate? OnPacketFrameReceived;
     public event IConnection.PacketSegmentReceivedDelegate? OnPacketSegmentReceived;
@@ -26,8 +23,6 @@ internal sealed class LobbyConnection(
 
     private readonly SemaphoreSlim clientSemaphore = new(1);
     private readonly SemaphoreSlim serverSemaphore = new(1);
-
-    private Brokefish? brokefish;
 
     public async Task StartAsync(CancellationToken cancellationToken = default) {
         await this.serverTcp.ConnectAsync(originalEndpoint, cancellationToken);
@@ -53,8 +48,13 @@ internal sealed class LobbyConnection(
         CancellationToken cancellationToken = default
     ) {
         // Constant buffers that we re-use to be speedy
+        // Oodle might be able to decompress/recompress in place but I'm not too sure
+        var oodleBuffer = new byte[IConnection.BufferSize].AsMemory();
         var readBuffer = new byte[IConnection.BufferSize].AsMemory();
         var writeBuffer = new byte[IConnection.BufferSize].AsMemory();
+
+        using var readOodle = oodleFactory.Create();
+        using var writeOodle = oodleFactory.Create();
 
         while (src.CanRead && dest.CanWrite && !cancellationToken.IsCancellationRequested) {
             await src.ReadExactlyAsync(readBuffer[..FrameHeader.StructSize], cancellationToken);
@@ -66,17 +66,32 @@ internal sealed class LobbyConnection(
                 ref var frameHeader = ref MemoryMarshal.AsRef<FrameHeader>(readBuffer.Span);
 
                 var size = (int) frameHeader.Size;
+                var compressionType = frameHeader.CompressionType;
+                var decompressedSize = frameHeader.DecompressedSize;
                 if (this.Type is null && frameHeader.ConnectionType != ConnectionType.None) {
                     this.Type = frameHeader.ConnectionType;
                 }
 
-                var span = readBuffer[FrameHeader.StructSize..size];
-                await src.ReadExactlyAsync(span, cancellationToken);
+                if (compressionType is CompressionType.Oodle) {
+                    var span = oodleBuffer[..(size - FrameHeader.StructSize)];
+                    await src.ReadExactlyAsync(span, cancellationToken);
+
+                    await semaphore.WaitAsync(cancellationToken);
+                    try {
+                        readOodle.Decompress(span.Span,
+                            readBuffer.Span[FrameHeader.StructSize..],
+                            (int) decompressedSize);
+                    } finally {
+                        semaphore.Release();
+                    }
+                } else {
+                    var span = readBuffer[FrameHeader.StructSize..size];
+                    await src.ReadExactlyAsync(span, cancellationToken);
+                }
             }
 
             // This is done twice because we can't bring the `ref` across async boundaries
             ref var readFrameHeader = ref MemoryMarshal.AsRef<FrameHeader>(readBuffer.Span);
-
             readBuffer.Span[..FrameHeader.StructSize].CopyTo(writeBuffer.Span); // Copy to write buffer
 
             // Loop for segments
@@ -98,18 +113,7 @@ internal sealed class LobbyConnection(
                 // Not using readPos anymore so we can increment it
                 readPos += segmentSize;
 
-                // Initialize Blowfish if we haven't already
-                if (segmentHeader.SegmentType is SegmentType.EncryptionInit
-                    && destinationType is DestinationType.Serverbound
-                    && this.brokefish is null) {
-                    this.brokefish = this.CreateBrokefish(segmentData.Span);
-                }
-
-                // Decrypt in place
                 var isIpc = segmentHeader.SegmentType is SegmentType.Ipc;
-                var isEncrypted = this.brokefish is not null && isIpc;
-                if (isEncrypted) this.brokefish!.DecipherPadded(segmentData.Span);
-
                 var segmentDropped = false;
                 try {
                     var packetSegment = new PacketSegment() {
@@ -130,15 +134,6 @@ internal sealed class LobbyConnection(
                     var ipcDataEnd = ipcDataStart + ipcDataLen;
                     var ipcData = segmentData[ipcDataStart..ipcDataEnd];
 
-                    if (zoneProxy is not null && ipcHeader.Opcode == proxyConfig.EnterWorldOpcode &&
-                        destinationType is DestinationType.Clientbound) {
-                        try {
-                            this.OverwriteEnterWorld(ipcData.Span);
-                        } catch {
-                            // ignored
-                        }
-                    }
-
                     try {
                         var ipcPacket = new IpcPacket() {
                             FrameHeader = ref readFrameHeader,
@@ -151,8 +146,6 @@ internal sealed class LobbyConnection(
                         // ignored
                     }
                 }
-
-                if (isEncrypted) this.brokefish!.EncipherPadded(segmentData.Span);
 
                 if (!segmentDropped) {
                     var segmentDataPos = writePos + SegmentHeader.StructSize;
@@ -173,10 +166,11 @@ internal sealed class LobbyConnection(
             writeFrameHeader.Count = writeCount;
 
             var frameDropped = false;
+            var writeData = writeBuffer[FrameHeader.StructSize..writePos];
             try {
                 var packetFrame = new PacketFrame() {
                     FrameHeader = ref writeFrameHeader,
-                    Data = writeBuffer[FrameHeader.StructSize..writePos].Span
+                    Data = writeData.Span
                 };
                 this.OnPacketFrameReceived?.Invoke(ref packetFrame, destinationType, ref frameDropped);
             } catch {
@@ -184,45 +178,28 @@ internal sealed class LobbyConnection(
             }
             if (frameDropped) continue;
 
-            // Finally, send it off
-            await semaphore.WaitAsync(cancellationToken);
-            try {
-                await dest.WriteAsync(writeBuffer[..writePos], cancellationToken);
-            } finally {
-                semaphore.Release();
+            if (writeFrameHeader.CompressionType is CompressionType.Oodle) {
+                // Re-compress
+                await semaphore.WaitAsync(cancellationToken);
+                try {
+                    var size = writeOodle.Compress(writeData.Span, oodleBuffer.Span);
+                    writeFrameHeader.Size = (uint) (FrameHeader.StructSize + size);
+
+                    await dest.WriteAsync(writeBuffer[..FrameHeader.StructSize], cancellationToken);
+                    await dest.WriteAsync(oodleBuffer[..size], cancellationToken);
+                } finally {
+                    semaphore.Release();
+                }
+            } else {
+                // Send off normally
+                await semaphore.WaitAsync(cancellationToken);
+                try {
+                    await dest.WriteAsync(writeBuffer[..writePos], cancellationToken);
+                } finally {
+                    semaphore.Release();
+                }
             }
         }
-    }
-
-    private void OverwriteEnterWorld(Span<byte> data) {
-        if (zoneProxy is null) return;
-
-        var packetPort = BitConverter.ToUInt16(data[proxyConfig.EnterWorldPortOffset..]);
-        var hostStart = proxyConfig.EnterWorldHostOffset;
-        var hostEnd = hostStart + proxyConfig.EnterWorldHostSize;
-        var hostSpan = data[hostStart..hostEnd];
-        var packetHost = Encoding.UTF8.GetString(hostSpan).TrimEnd('\0');
-
-        zoneProxy.SetNextServer(new IPEndPoint(IPAddress.Parse(packetHost), packetPort));
-
-        BitConverter.GetBytes((ushort) zoneProxy.PublicEndpoint.Port)
-            .CopyTo(data[proxyConfig.EnterWorldPortOffset..]);
-
-        hostSpan.Clear();
-        Encoding.UTF8.GetBytes(zoneProxy.PublicEndpoint.Address.ToString()).CopyTo(hostSpan);
-    }
-
-    private Brokefish CreateBrokefish(ReadOnlySpan<byte> data) {
-        var key = new byte[0x2C];
-        var span = key.AsSpan();
-
-        BitConverter.GetBytes(0x12345678u).CopyTo(span); // lmfao
-        data.Slice(proxyConfig.EncryptionInitKeyOffset, 4).CopyTo(span[4..]);
-        BitConverter.GetBytes(proxyConfig.EncryptionKeyVersion).CopyTo(span[8..]);
-        data.Slice(proxyConfig.EncryptionInitPhraseOffset, proxyConfig.EncryptionInitPhraseSize).CopyTo(span[12..]);
-
-        var md5 = MD5.HashData(span);
-        return new Brokefish(md5);
     }
 
     public Task SendPacketFrameAsync(
