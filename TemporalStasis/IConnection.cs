@@ -73,19 +73,19 @@ public interface IConnection : IDisposable {
     public ConnectionType? Type { get; }
 
     /// <summary>Send ("replay") a packet frame to the given destination.</summary>
-    /// <remarks>This method assumes the provided data is not compressed, if applicable.</remarks>
+    /// <remarks>This method assumes the provided data is (if applicable) obfuscated, but not compressed or encrypted.</remarks>
     public Task SendPacketFrameAsync(
         DestinationType destinationType, FrameHeader frameHeader, ReadOnlyMemory<byte> data
     );
 
     /// <summary>Send ("replay") a packet segment to the given destination.</summary>
-    /// <remarks>This method assumes the provided data is not encrypted, if applicable.</remarks>
+    /// <remarks>This method assumes the provided data is (if applicable) obfuscated, but not encrypted.</remarks>
     public Task SendPacketSegmentAsync(
         DestinationType destinationType, SegmentHeader segmentHeader, ReadOnlyMemory<byte> data
     );
 
     /// <summary>Send ("replay") an IPC packet to the given destination.</summary>
-    /// <remarks>This method assumes the provided data is obfuscated, if applicable.</remarks>
+    /// <remarks>This method assumes the provided data is (if applicable) obfuscated.</remarks>
     public Task SendIpcPacketAsync(
         DestinationType destinationType, uint sourceActor, uint targetActor,
         IpcHeader ipcHeader, ReadOnlyMemory<byte> data

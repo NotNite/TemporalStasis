@@ -20,22 +20,21 @@ Here's a simple comparison between other packet capturing tools:
 [machina]: <https://github.com/ravahn/machina>
 [chronofoil]: <https://github.com/ProjectChronofoil/Chronofoil.Plugin>
 
+## Requirements
+
+There are three "layers" of the FFXIV protocol that must be handled: encryption (in the lobby server), compression (in the zone server), and obfuscation (in some zone server packets). There's also some extra things that change often (like packet opcodes).
+
+- **Temporal Stasis requires the Oodle Network Compression library.** This must be present at runtime so Temporal Stasis can load it and decompress packets.
+  - Libraries for Oodle Network Compression can be obtained [here](https://github.com/WorkingRobot/OodleUE) (in the Releases tab). For Windows users, extract `oodle-network-shared.dll` from `msvc.zip` and place it next to your application executable.
+  - In the future, Temporal Stasis may allow loading Oodle from the FFXIV game executable.
+- **Temporal Stasis does not deobfuscate packets.** Note that obfuscation only applies to some fields of some packets in the zone server, and you might not need to worry about packet obfuscation, depending on your use case.
+  - Deobfuscating packets is outside the scope of Temporal Stasis, as packet obfuscation changes every game update. You can combine Temporal Stasis with a library like [Unscrambler](https://github.com/perchbirdd/Unscrambler), if you need.
+- **Temporal Stasis does not provide packet opcodes or structs.** IPC packet opcodes change every game update, and their fields shift often. If you are reading data out of specific packets, you are expected to know the current opcode and layout of the packet.
+- Temporal Stasis automatically provides the offsets and opcodes required for the lobby server (specifically the `EncryptionInit` segment and the `EnterWorld` packet). If these values are out of date, you must provide the correct values (in the `LobbyProxyConfig` class) for Temporal Stasis to work correctly.
+
 ## Usage
 
-Temporal Stasis is a library, and you're intended to use it in your own code. There's an example project in this repository (`TemporalStasis.Example`) that can show you around the API. This is a rewrite of the original Temporal Stasis, and some features (e.g. sending custom packets) aren't implemented yet.
-
-### Requirements
-
-For proxying the zone server, **Temporal Stasis requires the Oodle Network Compression library**. This can be obtained [here](https://github.com/WorkingRobot/OodleUE). This must be present at runtime so Temporal Stasis can load the library (e.g. next to your executable in the build output).
-
-For proxying the lobby server, Temporal Stasis requires some information that may change across game updates:
-
-- Opcode and fields of the `EnterWorld` IPC packet
-- Fields and keys of the `EncryptionInit` segment
-
-These are automatically provided by Temporal Stasis for the current game version, but you can override them if that information changes before this library is updated.
-
-### Connecting
+Temporal Stasis is a library, and you're intended to use it in your own code. There's an example project in this repository (`TemporalStasis.Example`) that can show you around the API.
 
 To connect to Temporal Stasis, you need to redirect the game client to connect to your proxy instead of the original lobby server, and then your proxy will then connect to the original lobby server. This can be done in a few ways:
 
@@ -44,6 +43,4 @@ To connect to Temporal Stasis, you need to redirect the game client to connect t
 
 Those arguments and that DNS record point to the Aether data center. Note that the index from the command line and name of the DNS record do not match up (if you need a reference, see the `WorldDCGroupType` sheet [here](https://v2.xivapi.com/api/sheet/WorldDCGroupType?fields=Name,NeolobbyId)).
 
-### Packet deobfuscation
-
-Since Patch 7.2, some packets from the zone server are obfuscated. Temporal Stasis does not deobfuscate these packets for you, but you can use Temporal Stasis with a library like [Unscrambler](https://github.com/perchbirdd/Unscrambler).
+The lobby proxy will rewrite some packets to make the game client connect to the zone proxy. From there, you can intercept packets in normal gameplay.
