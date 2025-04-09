@@ -212,21 +212,22 @@ internal sealed class ZoneConnection(
         Memory<byte> copied = new byte[FrameHeader.StructSize + data.Length];
         MemoryMarshal.Write(copied.Span[..FrameHeader.StructSize], frameHeader);
 
-        if (frameHeader.CompressionType is CompressionType.Oodle) {
-            var compressed = new byte[data.Length];
-            var len = oodle.Compress(data.Span, compressed);
-            compressed[..len].CopyTo(copied[FrameHeader.StructSize..]);
-
-            frameHeader.Size = (uint) (FrameHeader.StructSize + len);
-        } else {
-            data.CopyTo(copied[FrameHeader.StructSize..]);
-
-            frameHeader.Size = (uint) (FrameHeader.StructSize + data.Length);
-            frameHeader.CompressionType = CompressionType.None; // just in case there's a random value there
-        }
-
         await semaphore.WaitAsync(cancellationToken);
         try {
+            // In the semaphore since we're using Oodle
+            if (frameHeader.CompressionType is CompressionType.Oodle) {
+                var compressed = new byte[data.Length];
+                var len = oodle.Compress(data.Span, compressed);
+                compressed[..len].CopyTo(copied[FrameHeader.StructSize..]);
+
+                frameHeader.Size = (uint) (FrameHeader.StructSize + len);
+            } else {
+                data.CopyTo(copied[FrameHeader.StructSize..]);
+
+                frameHeader.Size = (uint) (FrameHeader.StructSize + data.Length);
+                frameHeader.CompressionType = CompressionType.None; // just in case there's a random value there
+            }
+
             await dest.WriteAsync(copied[..(int) frameHeader.Size], cancellationToken);
         } finally {
             semaphore.Release();
