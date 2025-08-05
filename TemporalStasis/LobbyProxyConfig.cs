@@ -19,7 +19,7 @@ public sealed class LobbyProxyConfig {
 
 
     /// <summary>The version used in the encryption key.</summary>
-    public uint EncryptionKeyVersion { get; set; } = 7000;
+    public uint EncryptionKeyVersion { get; set; } = 7201;
 
     /// <summary>The offset in the EncryptionInit segment that contains the key.</summary>
     public int EncryptionInitKeyOffset { get; set; } = 100;
