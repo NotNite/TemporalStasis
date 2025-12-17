@@ -182,8 +182,10 @@ internal sealed class ZoneConnection(
                     var compressedSize = writeOodle.Compress(oodleData.Span, oodleBuffer.Span);
                     writeFrameHeader.Size = (uint) (FrameHeader.StructSize + compressedSize);
 
-                    await dest.WriteAsync(writeBuffer[..FrameHeader.StructSize], cancellationToken);
-                    await dest.WriteAsync(oodleBuffer[..compressedSize], cancellationToken);
+                    // Copy back so we can write it one go
+                    oodleBuffer[..compressedSize].CopyTo(writeBuffer.Slice(FrameHeader.StructSize));
+
+                    await dest.WriteAsync(writeBuffer[..(int)writeFrameHeader.Size], cancellationToken);
                 } else {
                     // Write like normal
                     await dest.WriteAsync(writeBuffer[..writePos], cancellationToken);
